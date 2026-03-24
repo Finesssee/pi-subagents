@@ -673,6 +673,28 @@ This aggregated output becomes `{previous}` for the next step.
 
 `pi-subagents` reads optional JSON config from `~/.pi/agent/extensions/subagent/config.json`.
 
+### `syncBackend`
+
+`syncBackend` controls how foreground subagents are launched:
+
+```json
+{
+  "syncBackend": "tmux"
+}
+```
+
+Supported values:
+- `process` - current default; each sync subagent runs as a hidden child process
+- `tmux` - launches sync subagents inside a shared tmux session grouped by `runId`
+
+The `tmux` backend is sync-only in v1. Async runs still use the existing detached process runner. When multiple sync subagents share a `runId` (for example parallel workers in Orchestrator mode), they join the same tmux session as separate panes so you can inspect them live.
+
+You can also override this per launch without touching repo-local config:
+
+```bash
+PI_SUBAGENT_SYNC_BACKEND=tmux pi
+```
+
 ### `defaultSessionDir`
 
 `defaultSessionDir` sets the fallback directory used for session logs. Eg:
