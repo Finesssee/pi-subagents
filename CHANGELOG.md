@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.11.11] - 2026-03-23
+
+### Changed
+- Updated for pi 0.62.0 compatibility. `Skill.source` replaced with `Skill.sourceInfo` for skill provenance, `Widget` type replaced with `Component`. Bumped devDependencies to `^0.62.0`.
+
 ## [0.11.10] - 2026-03-21
 
 ### Changed

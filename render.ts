@@ -4,7 +4,7 @@
 
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import { getMarkdownTheme, type ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { Container, Markdown, Spacer, Text, truncateToWidth, visibleWidth, type Widget } from "@mariozechner/pi-tui";
+import { Container, Markdown, Spacer, Text, visibleWidth, type Component } from "@mariozechner/pi-tui";
 import {
 	type AsyncJobState,
 	type Details,
@@ -179,7 +179,7 @@ export function renderSubagentResult(
 	result: AgentToolResult<Details>,
 	_options: { expanded: boolean },
 	theme: Theme,
-): Widget {
+): Component {
 	const d = result.details;
 	if (!d || !d.results.length) {
 		const t = result.content[0];
