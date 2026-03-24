@@ -6,6 +6,10 @@
 - Added a dedicated builtin `orchestrator-planner` agent for Pi's live Orchestrator controller. Unlike the generic `planner`, it returns machine-readable JSON directly and does not write `plan.md`.
 - Added an optional `syncBackend: "tmux"` config path for foreground subagents. Sync runs can now launch inside grouped tmux sessions keyed by `runId`, so parallel workers share visible panes without changing the orchestrator contract.
 - Added `PI_SUBAGENT_SYNC_BACKEND=process|tmux` as a runtime override, which avoids dirtying a symlinked extension repo just to change the foreground backend.
+- Added `/subagent-backend [process|tmux]` so Pi can inspect or persist the foreground backend from inside the session, writing to `~/.pi/agent/subagent-config.json`.
+
+### Changed
+- Foreground backend config now prefers `~/.pi/agent/subagent-config.json` and only falls back to `~/.pi/agent/extensions/subagent/config.json` for legacy reads.
 
 ## [0.11.11] - 2026-03-23
 

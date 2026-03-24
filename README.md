@@ -139,6 +139,7 @@ Subagents only get direct MCP tools when `mcp:` items are explicitly listed. Eve
 
 | Command | Description |
 |---------|-------------|
+| `/subagent-backend [process\|tmux]` | Show or set the foreground subagent backend |
 | `/run <agent> <task>` | Run a single agent with a task |
 | `/chain agent1 "task1" -> agent2 "task2"` | Run agents in sequence with per-step tasks |
 | `/parallel agent1 "task1" -> agent2 "task2"` | Run agents in parallel with per-step tasks |
@@ -671,7 +672,21 @@ This aggregated output becomes `{previous}` for the next step.
 
 ## Extension Configuration
 
-`pi-subagents` reads optional JSON config from `~/.pi/agent/extensions/subagent/config.json`.
+`pi-subagents` reads optional JSON config with this precedence:
+
+1. `PI_SUBAGENT_SYNC_BACKEND=process|tmux`
+2. `~/.pi/agent/subagent-config.json`
+3. `~/.pi/agent/extensions/subagent/config.json` (legacy fallback)
+
+Use `/subagent-backend` to inspect or persist the foreground backend without editing files by hand:
+
+```text
+/subagent-backend
+/subagent-backend tmux
+/subagent-backend process
+```
+
+The slash command writes to `~/.pi/agent/subagent-config.json`, which avoids dirtying a symlinked extension checkout just to change a personal preference.
 
 ### `syncBackend`
 
@@ -689,7 +704,7 @@ Supported values:
 
 The `tmux` backend is sync-only in v1. Async runs still use the existing detached process runner. When multiple sync subagents share a `runId` (for example parallel workers in Orchestrator mode), they join the same tmux session as separate panes so you can inspect them live.
 
-You can also override this per launch without touching repo-local config:
+You can also override this per launch without touching persisted config:
 
 ```bash
 PI_SUBAGENT_SYNC_BACKEND=tmux pi
