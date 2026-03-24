@@ -3,6 +3,13 @@ import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-age
 import { Key, matchesKey } from "@mariozechner/pi-tui";
 import { discoverAgents, discoverAgentsAll } from "./agents.js";
 import { AgentManagerComponent, type ManagerResult } from "./agent-manager.js";
+import {
+	getSubagentLegacyConfigPath,
+	getSubagentUserConfigPath,
+	loadPersistedSubagentConfig,
+	loadSubagentConfig,
+	saveSubagentConfigPatch,
+} from "./config.js";
 import { discoverAvailableSkills } from "./skills.js";
 import type { SubagentParamsLike } from "./subagent-executor.js";
 import type { SlashSubagentResponse, SlashSubagentUpdate } from "./slash-bridge.js";
@@ -104,6 +111,41 @@ const makeAgentCompletions = (state: SubagentState, multiAgent: boolean) => (pre
 	return agents.filter((a) => a.name.startsWith(lastWord)).map((a) => ({ value: `${beforeLastWord}${a.name}`, label: a.name }));
 };
 
+const makeBackendCompletions = (prefix: string) =>
+	(["process", "tmux"] as const)
+		.filter((backend) => backend.startsWith(prefix.trim()))
+		.map((backend) => ({ value: backend, label: backend }));
+
+function getBackendStatusMessage(): string {
+	const persisted = loadPersistedSubagentConfig();
+	const effective = loadSubagentConfig();
+	const override = process.env.PI_SUBAGENT_SYNC_BACKEND;
+	const source = override === "process" || override === "tmux"
+		? `env override (${override})`
+		: persisted.syncBackend
+			? "saved user config"
+			: "default";
+
+	return [
+		`Foreground subagent backend: ${effective.syncBackend ?? "process"}`,
+		`Source: ${source}`,
+		`User config: ${getSubagentUserConfigPath()}`,
+		`Legacy config: ${getSubagentLegacyConfigPath()}`,
+	].join("\n");
+}
+
+function getBackendSetMessage(backend: "process" | "tmux"): string {
+	const override = process.env.PI_SUBAGENT_SYNC_BACKEND;
+	const lines = [
+		`Saved foreground subagent backend: ${backend}`,
+		`User config: ${getSubagentUserConfigPath()}`,
+	];
+	if (override === "process" || override === "tmux") {
+		lines.push(`Note: current session still has PI_SUBAGENT_SYNC_BACKEND=${override}, so that override wins until you launch Pi without it.`);
+	}
+	return lines.join("\n");
+}
+
 async function requestSlashRun(
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
@@ -193,6 +235,24 @@ function extractSlashMessageText(content: string | Array<{ type?: string; text?:
 		.filter((part): part is { type: "text"; text: string } => part?.type === "text" && typeof part.text === "string")
 		.map((part) => part.text)
 		.join("\n");
+}
+
+function emitCommandText(
+	pi: ExtensionAPI,
+	ctx: ExtensionContext,
+	text: string,
+	details: Record<string, unknown> = {},
+): void {
+	if (!ctx.hasUI) {
+		console.log(text);
+		return;
+	}
+	pi.sendMessage({
+		customType: "subagent-command",
+		content: text,
+		display: true,
+		details,
+	});
 }
 
 async function runSlashSubagent(
@@ -385,6 +445,25 @@ export function registerSlashCommands(
 	pi: ExtensionAPI,
 	state: SubagentState,
 ): void {
+	pi.registerCommand("subagent-backend", {
+		description: "Show or set the foreground subagent backend: /subagent-backend [process|tmux]",
+		getArgumentCompletions: makeBackendCompletions,
+		handler: async (args, ctx) => {
+			const input = args.trim();
+			if (!input) {
+				emitCommandText(pi, ctx, getBackendStatusMessage(), { kind: "backend-status" });
+				return;
+			}
+			if (input !== "process" && input !== "tmux") {
+				ctx.ui.notify("Usage: /subagent-backend [process|tmux]", "error");
+				return;
+			}
+			saveSubagentConfigPatch({ syncBackend: input });
+			if (ctx.hasUI) ctx.ui.notify(`Foreground subagent backend set to ${input}`, "info");
+			emitCommandText(pi, ctx, getBackendSetMessage(input), { kind: "backend-set", backend: input });
+		},
+	});
+
 	pi.registerCommand("agents", {
 		description: "Open the Agents Manager",
 		handler: async (_args, ctx) => {

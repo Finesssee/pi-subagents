@@ -6,16 +6,18 @@
  * - Async: Background execution, emits events when done
  *
  * Modes: single (agent + task), parallel (tasks[]), chain (chain[] with {previous})
- * Toggle: async parameter (default: false, configurable via config.json)
- * Optional sync backend: subprocess (default) or tmux panes via config.json
+ * Toggle: async parameter (default: false, configurable via JSON config)
+ * Optional sync backend: subprocess (default) or tmux panes via JSON config
  *
- * Config file: ~/.pi/agent/extensions/subagent/config.json
- *   { "asyncByDefault": true, "syncBackend": "tmux" }
+ * Config precedence:
+ *   1. PI_SUBAGENT_SYNC_BACKEND=process|tmux
+ *   2. ~/.pi/agent/subagent-config.json
+ *   3. ~/.pi/agent/extensions/subagent/config.json (legacy)
  */
 
-import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import * as fs from "node:fs";
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import { type ExtensionAPI, type ExtensionContext, type ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Box, Container, Spacer, Text } from "@mariozechner/pi-tui";
@@ -32,6 +34,7 @@ import { registerSlashCommands } from "./slash-commands.js";
 import { registerPromptTemplateDelegationBridge } from "./prompt-template-bridge.js";
 import { registerSlashSubagentBridge } from "./slash-bridge.js";
 import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDetails, restoreSlashFinalSnapshots, type SlashMessageDetails } from "./slash-live-state.js";
+import { loadSubagentConfig } from "./config.js";
 import {
 	type Details,
 	type ExtensionConfig,
@@ -57,23 +60,6 @@ function getSubagentSessionRoot(parentSessionFile: string | null): string {
 		return path.join(sessionsDir, baseName);
 	}
 	return fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-session-"));
-}
-
-function loadConfig(): ExtensionConfig {
-	const configPath = path.join(os.homedir(), ".pi", "agent", "extensions", "subagent", "config.json");
-	let config: ExtensionConfig = {};
-	try {
-		if (fs.existsSync(configPath)) {
-			config = JSON.parse(fs.readFileSync(configPath, "utf-8")) as ExtensionConfig;
-		}
-	} catch (error) {
-		console.error(`Failed to load subagent config from '${configPath}':`, error);
-	}
-	const syncBackendOverride = process.env.PI_SUBAGENT_SYNC_BACKEND;
-	if (syncBackendOverride === "process" || syncBackendOverride === "tmux") {
-		config.syncBackend = syncBackendOverride;
-	}
-	return config;
 }
 
 function expandTilde(p: string): string {
@@ -149,7 +135,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	ensureAccessibleDir(ASYNC_DIR);
 	cleanupOldChainDirs();
 
-	const config = loadConfig();
+	const config = loadSubagentConfig();
 	const asyncByDefault = config.asyncByDefault === true;
 	const tempArtifactsDir = getArtifactsDir(null);
 	cleanupAllArtifactDirs(DEFAULT_ARTIFACT_CONFIG.cleanupDays);
