@@ -50,10 +50,11 @@ Agents are markdown files with YAML frontmatter that define specialized subagent
 
 Use `agentScope` parameter to control discovery: `"user"`, `"project"`, or `"both"` (default; project takes priority).
 
-**Builtin agents:** The extension ships with ready-to-use agents — `scout`, `planner`, `worker`, `reviewer`, `context-builder`, `researcher`, and `delegate`. They load at lowest priority so any user or project agent with the same name overrides them. Builtin agents appear with a `[builtin]` badge in listings and cannot be modified through management actions (create a same-named user agent to override instead).
+**Builtin agents:** The extension ships with ready-to-use agents — `scout`, `planner`, `orchestrator-planner`, `worker`, `reviewer`, `context-builder`, `researcher`, and `delegate`. They load at lowest priority so any user or project agent with the same name overrides them. Builtin agents appear with a `[builtin]` badge in listings and cannot be modified through management actions (create a same-named user agent to override instead).
 
 Current builtin role defaults are tuned for Pi's behavioral Orchestrator mode:
-- `planner` -> `smart/gpt-5.4:xhigh`
+- `planner` -> `smart/gpt-5.4:xhigh` for markdown implementation plans
+- `orchestrator-planner` -> `smart/gpt-5.4:xhigh` for machine-readable controller plans
 - `worker` -> `smart/composer-2-fast`
 - `reviewer` -> `smart/gpt-5.4:high`
 

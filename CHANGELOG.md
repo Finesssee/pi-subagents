@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- Added a dedicated builtin `orchestrator-planner` agent for Pi's live Orchestrator controller. Unlike the generic `planner`, it returns machine-readable JSON directly and does not write `plan.md`.
+
 ## [0.11.11] - 2026-03-23
 
 ### Changed
