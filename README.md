@@ -57,6 +57,11 @@ Current builtin role defaults are tuned for Pi's behavioral Orchestrator mode:
 - `worker` -> `smart/composer-2-fast`
 - `reviewer` -> `smart/gpt-5.4:high`
 
+Delegated Droid-backed runs now ignore ambient `PI_DROID_AUTO` and apply subagent-scoped defaults instead:
+- `worker` defaults to `PI_DROID_AUTO=high`
+- all other agents default to `PI_DROID_AUTO=medium`
+- override with `PI_SUBAGENT_DROID_AUTO=low|medium|high` or `PI_SUBAGENT_<AGENT_NAME>_DROID_AUTO=...`
+
 > **Note:** The `researcher` agent uses `web_search`, `fetch_content`, and `get_search_content` tools which require the [pi-web-access](https://github.com/nicobailon/pi-web-access) extension. Install it with `pi install npm:pi-web-access`.
 
 **Agent frontmatter:**

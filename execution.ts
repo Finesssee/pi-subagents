@@ -31,6 +31,7 @@ import { buildSkillInjection, resolveSkills } from "./skills.js";
 import { getPiSpawnCommand } from "./pi-spawn.js";
 import { createJsonlWriter } from "./jsonl-writer.js";
 import { applyThinkingSuffix, buildPiArgs, cleanupTempDir } from "./pi-args.js";
+import { resolveSubagentProviderEnv } from "./provider-env.ts";
 
 /**
  * Run a subagent synchronously (blocking until complete)
@@ -125,7 +126,12 @@ export async function runSync(
 		}
 	}
 
-	const spawnEnv = { ...process.env, ...sharedEnv, ...getSubagentDepthEnv() };
+	const spawnEnv = {
+		...process.env,
+		...sharedEnv,
+		...getSubagentDepthEnv(),
+		...resolveSubagentProviderEnv(agentName),
+	};
 
 	let closeJsonlWriter: (() => Promise<void>) | undefined;
 	const exitCode = await new Promise<number>((resolve) => {
