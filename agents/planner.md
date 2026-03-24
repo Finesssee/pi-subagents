@@ -2,8 +2,8 @@
 name: planner
 description: Creates implementation plans from context and requirements
 tools: read, grep, find, ls, write
-model: claude-opus-4-6
-thinking: high
+model: smart/gpt-5.4
+thinking: xhigh
 output: plan.md
 defaultReads: context.md
 ---

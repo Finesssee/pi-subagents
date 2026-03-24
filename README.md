@@ -52,6 +52,11 @@ Use `agentScope` parameter to control discovery: `"user"`, `"project"`, or `"bot
 
 **Builtin agents:** The extension ships with ready-to-use agents — `scout`, `planner`, `worker`, `reviewer`, `context-builder`, `researcher`, and `delegate`. They load at lowest priority so any user or project agent with the same name overrides them. Builtin agents appear with a `[builtin]` badge in listings and cannot be modified through management actions (create a same-named user agent to override instead).
 
+Current builtin role defaults are tuned for Pi's behavioral Orchestrator mode:
+- `planner` -> `smart/gpt-5.4:xhigh`
+- `worker` -> `smart/composer-2-fast`
+- `reviewer` -> `smart/gpt-5.4:high`
+
 > **Note:** The `researcher` agent uses `web_search`, `fetch_content`, and `get_search_content` tools which require the [pi-web-access](https://github.com/nicobailon/pi-web-access) extension. Install it with `pi install npm:pi-web-access`.
 
 **Agent frontmatter:**
