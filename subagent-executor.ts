@@ -352,14 +352,15 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 		shareEnabled,
 		sessionDirForIndex,
 		sessionFileForIndex,
-		artifactsDir,
-		artifactConfig,
-		includeProgress: params.includeProgress,
-		clarify: params.clarify,
-		onUpdate,
-		chainSkills,
-		chainDir: params.chainDir,
-	});
+			artifactsDir,
+			artifactConfig,
+			includeProgress: params.includeProgress,
+			clarify: params.clarify,
+			onUpdate,
+			chainSkills,
+			chainDir: params.chainDir,
+			executionBackend: deps.config.syncBackend,
+		});
 
 	if (chainResult.requestedAsync) {
 		if (!isAsyncAvailable()) {
@@ -533,6 +534,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 			maxOutput: params.maxOutput,
 			modelOverride: modelOverrides[i],
 			skills: effectiveSkills === false ? [] : effectiveSkills,
+			executionBackend: deps.config.syncBackend,
 			onUpdate: onUpdate
 				? (p) => {
 						const stepResults = p.details?.results || [];
@@ -714,6 +716,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		onUpdate,
 		modelOverride,
 		skills: effectiveSkills,
+		executionBackend: deps.config.syncBackend,
 	});
 	recordRun(params.agent!, cleanTask, r.exitCode, r.progressSummary?.durationMs ?? 0);
 

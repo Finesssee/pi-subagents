@@ -3,6 +3,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { readFile as readFileAsync } from "node:fs/promises";
 import type { Message } from "@mariozechner/pi-ai";
 import type { AgentConfig } from "./agents.js";
 import {
@@ -32,6 +33,7 @@ import { getPiSpawnCommand } from "./pi-spawn.js";
 import { createJsonlWriter } from "./jsonl-writer.js";
 import { applyThinkingSuffix, buildPiArgs, cleanupTempDir } from "./pi-args.js";
 import { resolveSubagentProviderEnv } from "./provider-env.ts";
+import { isTmuxAvailable, killTmuxSession, launchInTmux, readIncrementalFile, tailFileText } from "./tmux-backend.ts";
 
 /**
  * Run a subagent synchronously (blocking until complete)
@@ -112,6 +114,8 @@ export async function runSync(
 	result.progress = progress;
 
 	const startTime = Date.now();
+	const requestedBackend = options.executionBackend ?? "process";
+	const executionBackend = requestedBackend === "tmux" && isTmuxAvailable() ? "tmux" : "process";
 
 	let artifactPathsResult: ArtifactPaths | undefined;
 	let jsonlPath: string | undefined;
@@ -133,9 +137,233 @@ export async function runSync(
 		...resolveSubagentProviderEnv(agentName),
 	};
 
+	let buf = "";
+	let stderrBuf = "";
+	let lastUpdateTime = 0;
+	let updatePending = false;
+	let pendingTimer: ReturnType<typeof setTimeout> | null = null;
+	let processClosed = false;
+	const UPDATE_THROTTLE_MS = 50;
+
+	const scheduleUpdate = () => {
+		if (!onUpdate || processClosed) return;
+		const now = Date.now();
+		const elapsed = now - lastUpdateTime;
+
+		if (elapsed >= UPDATE_THROTTLE_MS) {
+			if (pendingTimer) {
+				clearTimeout(pendingTimer);
+				pendingTimer = null;
+			}
+			lastUpdateTime = now;
+			updatePending = false;
+			progress.durationMs = now - startTime;
+			onUpdate({
+				content: [{ type: "text", text: getFinalOutput(result.messages) || "(running...)" }],
+				details: { mode: "single", results: [result], progress: [progress] },
+			});
+		} else if (!updatePending) {
+			updatePending = true;
+			pendingTimer = setTimeout(() => {
+				pendingTimer = null;
+				if (updatePending && !processClosed) {
+					updatePending = false;
+					lastUpdateTime = Date.now();
+					progress.durationMs = Date.now() - startTime;
+					onUpdate({
+						content: [{ type: "text", text: getFinalOutput(result.messages) || "(running...)" }],
+						details: { mode: "single", results: [result], progress: [progress] },
+					});
+				}
+			}, UPDATE_THROTTLE_MS - elapsed);
+		}
+	};
+
+	const processLine = (line: string) => {
+		if (!line.trim()) return;
+		try {
+			const evt = JSON.parse(line) as { type?: string; message?: Message; toolName?: string; args?: unknown };
+			const now = Date.now();
+			progress.durationMs = now - startTime;
+
+			if (evt.type === "tool_execution_start") {
+				progress.toolCount++;
+				progress.currentTool = evt.toolName;
+				progress.currentToolArgs = extractToolArgsPreview((evt.args || {}) as Record<string, unknown>);
+				lastUpdateTime = 0;
+				scheduleUpdate();
+			}
+
+			if (evt.type === "tool_execution_end") {
+				if (progress.currentTool) {
+					progress.recentTools.unshift({
+						tool: progress.currentTool,
+						args: progress.currentToolArgs || "",
+						endMs: now,
+					});
+					if (progress.recentTools.length > 5) {
+						progress.recentTools.pop();
+					}
+				}
+				progress.currentTool = undefined;
+				progress.currentToolArgs = undefined;
+				scheduleUpdate();
+			}
+
+			if (evt.type === "message_end" && evt.message) {
+				result.messages.push(evt.message);
+				if (evt.message.role === "assistant") {
+					result.usage.turns++;
+					const u = evt.message.usage;
+					if (u) {
+						result.usage.input += u.input || 0;
+						result.usage.output += u.output || 0;
+						result.usage.cacheRead += u.cacheRead || 0;
+						result.usage.cacheWrite += u.cacheWrite || 0;
+						result.usage.cost += u.cost?.total || 0;
+						progress.tokens = result.usage.input + result.usage.output;
+					}
+					if (!result.model && evt.message.model) result.model = evt.message.model;
+					if (evt.message.errorMessage) result.error = evt.message.errorMessage;
+
+					const text = extractTextFromContent(evt.message.content);
+					if (text) {
+						const lines = text
+							.split("\n")
+							.filter((l) => l.trim())
+							.slice(-10);
+						progress.recentOutput.push(...lines);
+						if (progress.recentOutput.length > 50) {
+							progress.recentOutput.splice(0, progress.recentOutput.length - 50);
+						}
+					}
+				}
+				scheduleUpdate();
+			}
+			if (evt.type === "tool_result_end" && evt.message) {
+				result.messages.push(evt.message);
+				const toolText = extractTextFromContent(evt.message.content);
+				if (toolText) {
+					const toolLines = toolText
+						.split("\n")
+						.filter((l) => l.trim())
+						.slice(-10);
+					progress.recentOutput.push(...toolLines);
+					if (progress.recentOutput.length > 50) {
+						progress.recentOutput.splice(0, progress.recentOutput.length - 50);
+					}
+				}
+				scheduleUpdate();
+			}
+		} catch {
+			// Non-JSON stdout lines are expected; only structured events are parsed.
+		}
+	};
+
 	let closeJsonlWriter: (() => Promise<void>) | undefined;
+	let backendTempDir = tempDir;
 	const exitCode = await new Promise<number>((resolve) => {
 		const spawnSpec = getPiSpawnCommand(args);
+		if (executionBackend === "tmux") {
+			const jsonlWriter = createJsonlWriter(jsonlPath, {
+				pause() {},
+				resume() {},
+			});
+			closeJsonlWriter = () => jsonlWriter.close();
+			let launch;
+			try {
+				launch = launchInTmux({
+					runId,
+					index,
+					command: spawnSpec.command,
+					args: spawnSpec.args,
+					cwd: cwd ?? runtimeCwd,
+					env: {
+						...sharedEnv,
+						...getSubagentDepthEnv(),
+						...resolveSubagentProviderEnv(agentName),
+					},
+					tempDir,
+				});
+				backendTempDir = launch.tempDir;
+			} catch (error) {
+				stderrBuf = error instanceof Error ? error.message : String(error);
+				resolve(1);
+				return;
+			}
+
+			let offset = 0;
+			const flushIncrementalOutput = () => {
+				const next = readIncrementalFile(launch.outputPath, offset);
+				if (!next.chunk) return;
+				offset = next.nextOffset;
+				buf += next.chunk;
+				const lines = buf.split("\n");
+				buf = lines.pop() || "";
+				for (const line of lines) {
+					jsonlWriter.writeLine(line);
+					processLine(line);
+				}
+				scheduleUpdate();
+			};
+
+			const kill = () => killTmuxSession(runId);
+			if (signal?.aborted) {
+				kill();
+				processClosed = true;
+				resolve(1);
+				return;
+			}
+			signal?.addEventListener("abort", kill, { once: true });
+
+			(async () => {
+				try {
+					for (;;) {
+						flushIncrementalOutput();
+						try {
+							const raw = await readFileAsync(launch.exitCodePath, "utf-8");
+							const parsed = Number.parseInt(raw.trim(), 10);
+							processClosed = true;
+							if (pendingTimer) {
+								clearTimeout(pendingTimer);
+								pendingTimer = null;
+							}
+							if (buf.trim()) {
+								jsonlWriter.writeLine(buf);
+								processLine(buf);
+							}
+							if (parsed !== 0 && !result.error) {
+								stderrBuf = tailFileText(launch.outputPath);
+								if (stderrBuf.trim()) result.error = stderrBuf.trim();
+							}
+							resolve(Number.isFinite(parsed) ? parsed : 1);
+							return;
+						} catch {
+							// Still running.
+						}
+						if (signal?.aborted) {
+							processClosed = true;
+							if (pendingTimer) {
+								clearTimeout(pendingTimer);
+								pendingTimer = null;
+							}
+							stderrBuf = "Aborted";
+							resolve(1);
+							return;
+						}
+						await new Promise((innerResolve) => setTimeout(innerResolve, 50));
+					}
+				} finally {
+					signal?.removeEventListener("abort", kill);
+				}
+			})().catch((error) => {
+				processClosed = true;
+				stderrBuf = error instanceof Error ? error.message : String(error);
+				resolve(1);
+			});
+			return;
+		}
+
 		const proc = spawn(spawnSpec.command, spawnSpec.args, {
 			cwd: cwd ?? runtimeCwd,
 			env: spawnEnv,
@@ -143,147 +371,15 @@ export async function runSync(
 		});
 		const jsonlWriter = createJsonlWriter(jsonlPath, proc.stdout);
 		closeJsonlWriter = () => jsonlWriter.close();
-		let buf = "";
-
-		// Throttled update mechanism - consolidates all updates
-		let lastUpdateTime = 0;
-		let updatePending = false;
-		let pendingTimer: ReturnType<typeof setTimeout> | null = null;
-		let processClosed = false;
-		const UPDATE_THROTTLE_MS = 50; // Reduced from 75ms for faster responsiveness
-
-		const scheduleUpdate = () => {
-			if (!onUpdate || processClosed) return;
-			const now = Date.now();
-			const elapsed = now - lastUpdateTime;
-
-			if (elapsed >= UPDATE_THROTTLE_MS) {
-				// Enough time passed, update immediately
-				// Clear any pending timer to avoid double-updates
-				if (pendingTimer) {
-					clearTimeout(pendingTimer);
-					pendingTimer = null;
-				}
-				lastUpdateTime = now;
-				updatePending = false;
-				progress.durationMs = now - startTime;
-				onUpdate({
-					content: [{ type: "text", text: getFinalOutput(result.messages) || "(running...)" }],
-					details: { mode: "single", results: [result], progress: [progress] },
-				});
-			} else if (!updatePending) {
-				// Schedule update for later
-				updatePending = true;
-				pendingTimer = setTimeout(() => {
-					pendingTimer = null;
-					if (updatePending && !processClosed) {
-						updatePending = false;
-						lastUpdateTime = Date.now();
-						progress.durationMs = Date.now() - startTime;
-						onUpdate({
-							content: [{ type: "text", text: getFinalOutput(result.messages) || "(running...)" }],
-							details: { mode: "single", results: [result], progress: [progress] },
-						});
-					}
-				}, UPDATE_THROTTLE_MS - elapsed);
-			}
-		};
-
-		const processLine = (line: string) => {
-			if (!line.trim()) return;
-			jsonlWriter.writeLine(line);
-			try {
-				const evt = JSON.parse(line) as { type?: string; message?: Message; toolName?: string; args?: unknown };
-				const now = Date.now();
-				progress.durationMs = now - startTime;
-
-				if (evt.type === "tool_execution_start") {
-					progress.toolCount++;
-					progress.currentTool = evt.toolName;
-					progress.currentToolArgs = extractToolArgsPreview((evt.args || {}) as Record<string, unknown>);
-					// Tool start is important - update immediately by forcing throttle reset
-					lastUpdateTime = 0;
-					scheduleUpdate();
-				}
-
-				if (evt.type === "tool_execution_end") {
-					if (progress.currentTool) {
-						progress.recentTools.unshift({
-							tool: progress.currentTool,
-							args: progress.currentToolArgs || "",
-							endMs: now,
-						});
-						if (progress.recentTools.length > 5) {
-							progress.recentTools.pop();
-						}
-					}
-					progress.currentTool = undefined;
-					progress.currentToolArgs = undefined;
-					scheduleUpdate();
-				}
-
-				if (evt.type === "message_end" && evt.message) {
-					result.messages.push(evt.message);
-					if (evt.message.role === "assistant") {
-						result.usage.turns++;
-						const u = evt.message.usage;
-						if (u) {
-							result.usage.input += u.input || 0;
-							result.usage.output += u.output || 0;
-							result.usage.cacheRead += u.cacheRead || 0;
-							result.usage.cacheWrite += u.cacheWrite || 0;
-							result.usage.cost += u.cost?.total || 0;
-							progress.tokens = result.usage.input + result.usage.output;
-						}
-						if (!result.model && evt.message.model) result.model = evt.message.model;
-						if (evt.message.errorMessage) result.error = evt.message.errorMessage;
-
-						const text = extractTextFromContent(evt.message.content);
-						if (text) {
-							const lines = text
-								.split("\n")
-								.filter((l) => l.trim())
-								.slice(-10);
-							// Append to existing recentOutput (keep last 50 total) - mutate in place for efficiency
-							progress.recentOutput.push(...lines);
-							if (progress.recentOutput.length > 50) {
-								progress.recentOutput.splice(0, progress.recentOutput.length - 50);
-							}
-						}
-					}
-					scheduleUpdate();
-				}
-				if (evt.type === "tool_result_end" && evt.message) {
-					result.messages.push(evt.message);
-					// Also capture tool result text in recentOutput for streaming display
-					const toolText = extractTextFromContent(evt.message.content);
-					if (toolText) {
-						const toolLines = toolText
-							.split("\n")
-							.filter((l) => l.trim())
-							.slice(-10);
-						// Append to existing recentOutput (keep last 50 total) - mutate in place for efficiency
-						progress.recentOutput.push(...toolLines);
-						if (progress.recentOutput.length > 50) {
-							progress.recentOutput.splice(0, progress.recentOutput.length - 50);
-						}
-					}
-					scheduleUpdate();
-				}
-			} catch {
-				// Non-JSON stdout lines are expected; only structured events are parsed.
-			}
-		};
-
-		let stderrBuf = "";
 
 		proc.stdout.on("data", (d) => {
 			buf += d.toString();
 			const lines = buf.split("\n");
 			buf = lines.pop() || "";
-			lines.forEach(processLine);
-
-			// Also schedule an update on data received (handles streaming output)
+			lines.forEach((line) => {
+				jsonlWriter.writeLine(line);
+				processLine(line);
+			});
 			scheduleUpdate();
 		});
 		proc.stderr.on("data", (d) => {
@@ -295,7 +391,10 @@ export async function runSync(
 				clearTimeout(pendingTimer);
 				pendingTimer = null;
 			}
-			if (buf.trim()) processLine(buf);
+			if (buf.trim()) {
+				jsonlWriter.writeLine(buf);
+				processLine(buf);
+			}
 			if (code !== 0 && stderrBuf.trim() && !result.error) {
 				result.error = stderrBuf.trim();
 			}
@@ -321,8 +420,11 @@ export async function runSync(
 		}
 	}
 
-	cleanupTempDir(tempDir);
+	cleanupTempDir(backendTempDir);
 	result.exitCode = exitCode;
+	if (result.exitCode !== 0 && stderrBuf.trim() && !result.error) {
+		result.error = stderrBuf.trim();
+	}
 
 	if (exitCode === 0 && !result.error) {
 		const errInfo = detectSubagentError(result.messages);
@@ -365,6 +467,7 @@ export async function runSync(
 				exitCode: result.exitCode,
 				usage: result.usage,
 				model: result.model,
+				backend: executionBackend,
 				durationMs: progress.durationMs,
 				toolCount: progress.toolCount,
 				error: result.error,

@@ -36,6 +36,7 @@ import {
 	type Details,
 	type SingleResult,
 	MAX_CONCURRENCY,
+	type RunSyncOptions,
 } from "./types.js";
 
 /** Resolve a model name to its full provider/model format */
@@ -78,6 +79,7 @@ export interface ChainExecutionParams {
 	onUpdate?: (r: AgentToolResult<Details>) => void;
 	chainSkills?: string[];
 	chainDir?: string;
+	executionBackend?: RunSyncOptions["executionBackend"];
 }
 
 export interface ChainExecutionResult {
@@ -341,6 +343,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 						artifactConfig,
 						modelOverride: effectiveModel,
 						skills: behavior.skills === false ? [] : behavior.skills,
+						executionBackend: params.executionBackend,
 						onUpdate: onUpdate
 							? (p) => {
 									// Use concat instead of spread for better performance
@@ -498,6 +501,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				artifactConfig,
 				modelOverride: effectiveModel,
 				skills: behavior.skills === false ? [] : behavior.skills,
+				executionBackend: params.executionBackend,
 				onUpdate: onUpdate
 					? (p) => {
 							// Use concat instead of spread for better performance

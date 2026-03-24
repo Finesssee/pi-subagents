@@ -233,11 +233,14 @@ export interface RunSyncOptions {
 	modelOverride?: string;
 	/** Skills to inject (overrides agent default if provided) */
 	skills?: string[];
+	/** Execution backend for sync runs. Defaults to subprocess spawning. */
+	executionBackend?: "process" | "tmux";
 }
 
 export interface ExtensionConfig {
 	asyncByDefault?: boolean;
 	defaultSessionDir?: string;
+	syncBackend?: "process" | "tmux";
 }
 
 // ============================================================================

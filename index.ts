@@ -7,9 +7,10 @@
  *
  * Modes: single (agent + task), parallel (tasks[]), chain (chain[] with {previous})
  * Toggle: async parameter (default: false, configurable via config.json)
+ * Optional sync backend: subprocess (default) or tmux panes via config.json
  *
  * Config file: ~/.pi/agent/extensions/subagent/config.json
- *   { "asyncByDefault": true }
+ *   { "asyncByDefault": true, "syncBackend": "tmux" }
  */
 
 import * as fs from "node:fs";
@@ -60,14 +61,19 @@ function getSubagentSessionRoot(parentSessionFile: string | null): string {
 
 function loadConfig(): ExtensionConfig {
 	const configPath = path.join(os.homedir(), ".pi", "agent", "extensions", "subagent", "config.json");
+	let config: ExtensionConfig = {};
 	try {
 		if (fs.existsSync(configPath)) {
-			return JSON.parse(fs.readFileSync(configPath, "utf-8")) as ExtensionConfig;
+			config = JSON.parse(fs.readFileSync(configPath, "utf-8")) as ExtensionConfig;
 		}
 	} catch (error) {
 		console.error(`Failed to load subagent config from '${configPath}':`, error);
 	}
-	return {};
+	const syncBackendOverride = process.env.PI_SUBAGENT_SYNC_BACKEND;
+	if (syncBackendOverride === "process" || syncBackendOverride === "tmux") {
+		config.syncBackend = syncBackendOverride;
+	}
+	return config;
 }
 
 function expandTilde(p: string): string {
