@@ -6,6 +6,11 @@
 
 Pi extension for delegating tasks to subagents with chains, parallel execution, TUI clarification, and async support.
 
+The live Pi surfaces use a compact operator style:
+- async jobs render in a tight above-editor widget
+- single, chain, and parallel results render as structured terminal cards
+- slash commands stay available, but the common status/result surfaces aim to feel native to Pi rather than like raw tool logs
+
 https://github.com/user-attachments/assets/702554ec-faaf-4635-80aa-fb5d6e292fd1
 
 ## Installation
