@@ -127,21 +127,38 @@ function getBackendStatusMessage(): string {
 			: "default";
 
 	return [
-		`Foreground subagent backend: ${effective.syncBackend ?? "process"}`,
+		"Subagents",
+		`Foreground backend · ${effective.syncBackend ?? "process"} · ${source}`,
+		"",
+		"Overview",
+		`Backend: ${effective.syncBackend ?? "process"}`,
 		`Source: ${source}`,
+		"",
+		"Config",
 		`User config: ${getSubagentUserConfigPath()}`,
 		`Legacy config: ${getSubagentLegacyConfigPath()}`,
+		"",
+		"Actions",
+		"- /subagent-backend process",
+		"- /subagent-backend tmux",
 	].join("\n");
 }
 
 function getBackendSetMessage(backend: "process" | "tmux"): string {
 	const override = process.env.PI_SUBAGENT_SYNC_BACKEND;
 	const lines = [
-		`Saved foreground subagent backend: ${backend}`,
+		"Subagents",
+		`Saved backend · ${backend}`,
+		"",
+		"Overview",
+		`Backend: ${backend}`,
 		`User config: ${getSubagentUserConfigPath()}`,
 	];
 	if (override === "process" || override === "tmux") {
-		lines.push(`Note: current session still has PI_SUBAGENT_SYNC_BACKEND=${override}, so that override wins until you launch Pi without it.`);
+		lines.push("", "Actions", `- Current session still has PI_SUBAGENT_SYNC_BACKEND=${override}`);
+		lines.push("- Launch Pi without the env override to use the saved backend.");
+	} else {
+		lines.push("", "Actions", "- Restart or relaunch Pi to pick up the saved backend everywhere.");
 	}
 	return lines.join("\n");
 }

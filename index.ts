@@ -46,6 +46,8 @@ import {
 	WIDGET_KEY,
 } from "./types.js";
 
+const SUBAGENT_COMMAND_TYPE = "subagent-command";
+
 /**
  * Derive subagent session base directory from parent session file.
  * If parent session is ~/.pi/agent/sessions/abc123.jsonl,
@@ -130,6 +132,13 @@ function createSlashResultComponent(
 	return container;
 }
 
+function renderCommandMessageText(body: string): string {
+	const trimmed = body.trim();
+	if (!trimmed) return "Subagents";
+	if (trimmed.startsWith("Subagents")) return trimmed;
+	return ["Subagents", "", trimmed].join("\n");
+}
+
 export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	ensureAccessibleDir(RESULTS_DIR);
 	ensureAccessibleDir(ASYNC_DIR);
@@ -181,6 +190,18 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		const details = resolveSlashMessageDetails(message.details);
 		if (!details) return undefined;
 		return createSlashResultComponent(details, options, theme);
+	});
+	pi.registerMessageRenderer(SUBAGENT_COMMAND_TYPE, (message, _options, theme) => {
+		const body = renderCommandMessageText(typeof message.content === "string" ? message.content : JSON.stringify(message.content, null, 2));
+		const rendered = body.split("\n").map((line, index) => {
+			if (index === 0) return theme.fg("accent", theme.bold(line));
+			if (!line.trim()) return line;
+			if (/^(Overview|Config|Actions)$/.test(line.trim())) return theme.fg("muted", theme.bold(line));
+			if (index === 1) return theme.fg("dim", line);
+			if (/^Backend:/i.test(line)) return theme.fg("text", line);
+			return line;
+		}).join("\n");
+		return new Text(rendered, 0, 0);
 	});
 
 	const slashBridge = registerSlashSubagentBridge({
@@ -342,12 +363,18 @@ MANAGEMENT (use action field, omit agent/task/chain/tasks):
 					const updated = status.lastUpdate ? new Date(status.lastUpdate).toISOString() : "n/a";
 
 					const lines = [
+						"Subagents",
+						`${status.mode} run · ${status.state}`,
+						"",
+						"Overview",
 						`Run: ${status.runId}`,
 						`State: ${status.state}`,
 						`Mode: ${status.mode}`,
 						stepLine,
 						`Started: ${started}`,
 						`Updated: ${updated}`,
+						"",
+						"Artifacts",
 						`Dir: ${asyncDir}`,
 					];
 					if (status.sessionFile) lines.push(`Session: ${status.sessionFile}`);
@@ -363,8 +390,18 @@ MANAGEMENT (use action field, omit agent/task/chain/tasks):
 					const raw = fs.readFileSync(resultPath, "utf-8");
 					const data = JSON.parse(raw) as { id?: string; success?: boolean; summary?: string };
 					const status = data.success ? "complete" : "failed";
-					const lines = [`Run: ${data.id ?? params.id}`, `State: ${status}`, `Result: ${resultPath}`];
-					if (data.summary) lines.push("", data.summary);
+					const lines = [
+						"Subagents",
+						`${status} · result file`,
+						"",
+						"Overview",
+						`Run: ${data.id ?? params.id}`,
+						`State: ${status}`,
+						"",
+						"Artifacts",
+						`Result: ${resultPath}`,
+					];
+					if (data.summary) lines.push("", "Summary", data.summary);
 					return { content: [{ type: "text", text: lines.join("\n") }], details: { mode: "single", results: [] } };
 				} catch (error) {
 					const message = error instanceof Error ? error.message : String(error);
