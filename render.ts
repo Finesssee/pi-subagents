@@ -111,6 +111,13 @@ function hasEmptyTextOutputWithoutOutputTarget(task: string, output: string): bo
 	return !extractOutputTarget(task);
 }
 
+function renderState(theme: Theme, state: "running" | "complete" | "failed" | "attention"): string {
+	if (state === "running") return theme.fg("warning", "running");
+	if (state === "complete") return theme.fg("success", "ok");
+	if (state === "failed") return theme.fg("error", "failed");
+	return theme.fg("warning", "attention");
+}
+
 /**
  * Render the async jobs widget
  */
@@ -137,20 +144,15 @@ export function renderWidget(ctx: ExtensionContext, jobs: AsyncJobState[]): void
 	const theme = ctx.ui.theme;
 	const w = getTermWidth();
 	const lines: string[] = [];
-	lines.push(theme.fg("accent", "Async subagents"));
+	lines.push(theme.fg("accent", "Subagents · async"));
 
 	for (const job of displayedJobs) {
 		const id = job.asyncId.slice(0, 6);
-		const status =
-			job.status === "complete"
-				? theme.fg("success", "complete")
-				: job.status === "failed"
-					? theme.fg("error", "failed")
-					: theme.fg("warning", "running");
+		const status = job.status === "complete" ? renderState(theme, "complete") : job.status === "failed" ? renderState(theme, "failed") : renderState(theme, "running");
 
 		const stepsTotal = job.stepsTotal ?? (job.agents?.length ?? 1);
 		const stepIndex = job.currentStep !== undefined ? job.currentStep + 1 : undefined;
-		const stepText = stepIndex !== undefined ? `step ${stepIndex}/${stepsTotal}` : `steps ${stepsTotal}`;
+		const stepText = stepIndex !== undefined ? `${stepIndex}/${stepsTotal}` : `${stepsTotal} steps`;
 		const endTime = (job.status === "complete" || job.status === "failed") ? (job.updatedAt ?? Date.now()) : Date.now();
 		const elapsed = job.startedAt ? formatDuration(endTime - job.startedAt) : "";
 		const agentLabel = job.agents ? job.agents.join(" -> ") : (job.mode ?? "single");
@@ -159,12 +161,12 @@ export function renderWidget(ctx: ExtensionContext, jobs: AsyncJobState[]): void
 		const activityText = job.status === "running" ? getLastActivity(job.outputFile) : "";
 		const activitySuffix = activityText ? ` | ${theme.fg("dim", activityText)}` : "";
 
-		lines.push(truncLine(`- ${id} ${status} | ${agentLabel} | ${stepText}${elapsed ? ` | ${elapsed}` : ""}${tokenText}${activitySuffix}`, w));
+		lines.push(truncLine(`${id} · ${status} · ${agentLabel} · ${stepText}${elapsed ? ` · ${elapsed}` : ""}${tokenText}${activitySuffix}`, w));
 
 		if (job.status === "running" && job.outputFile) {
 			const tail = getOutputTail(job.outputFile, 3);
 			for (const line of tail) {
-				lines.push(truncLine(theme.fg("dim", `  > ${line}`), w));
+				lines.push(truncLine(theme.fg("dim", `Latest: ${line}`), w));
 			}
 		}
 	}
@@ -193,11 +195,7 @@ export function renderSubagentResult(
 	if (d.mode === "single" && d.results.length === 1) {
 		const r = d.results[0];
 		const isRunning = r.progress?.status === "running";
-		const icon = isRunning
-			? theme.fg("warning", "...")
-			: r.exitCode === 0
-				? theme.fg("success", "ok")
-				: theme.fg("error", "X");
+		const state = isRunning ? renderState(theme, "running") : r.exitCode === 0 ? renderState(theme, "complete") : renderState(theme, "failed");
 		const contextBadge = d.context === "fork" ? theme.fg("warning", " [fork]") : "";
 		const output = r.truncation?.text || getFinalOutput(r.messages);
 
@@ -209,7 +207,7 @@ export function renderSubagentResult(
 
 		const w = getTermWidth() - 4;
 		const c = new Container();
-		c.addChild(new Text(truncLine(`${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${contextBadge}${progressInfo}`, w), 0, 0));
+		c.addChild(new Text(truncLine(`${theme.fg("toolTitle", theme.bold("Subagent"))} · ${theme.bold(r.agent)} · ${state}${contextBadge}${progressInfo}`, w), 0, 0));
 		c.addChild(new Spacer(1));
 		const taskMaxLen = Math.max(20, w - 8);
 		const taskPreview = r.task.length > taskMaxLen
@@ -231,7 +229,7 @@ export function renderSubagentResult(
 				const toolLine = toolArgsPreview
 					? `${r.progress.currentTool}: ${toolArgsPreview}`
 					: r.progress.currentTool;
-				c.addChild(new Text(truncLine(theme.fg("warning", `> ${toolLine}`), w), 0, 0));
+				c.addChild(new Text(truncLine(theme.fg("warning", `Current tool: ${toolLine}`), w), 0, 0));
 			}
 			if (r.progress.recentTools?.length) {
 				for (const t of r.progress.recentTools.slice(-3)) {
@@ -239,11 +237,11 @@ export function renderSubagentResult(
 					const argsPreview = t.args.length > maxArgsLen
 						? `${t.args.slice(0, maxArgsLen)}...`
 						: t.args;
-					c.addChild(new Text(truncLine(theme.fg("dim", `${t.tool}: ${argsPreview}`), w), 0, 0));
+					c.addChild(new Text(truncLine(theme.fg("dim", `Recent tool: ${t.tool}: ${argsPreview}`), w), 0, 0));
 				}
 			}
 			for (const line of (r.progress.recentOutput ?? []).slice(-5)) {
-				c.addChild(new Text(truncLine(theme.fg("dim", `  ${line}`), w), 0, 0));
+				c.addChild(new Text(truncLine(theme.fg("dim", `Recent output: ${line}`), w), 0, 0));
 			}
 			if (r.progress.currentTool || r.progress.recentTools?.length || r.progress.recentOutput?.length) {
 				c.addChild(new Spacer(1));
@@ -263,9 +261,9 @@ export function renderSubagentResult(
 			c.addChild(new Text(truncLine(theme.fg("dim", `Skills: ${r.skills.join(", ")}`), w), 0, 0));
 		}
 		if (r.skillsWarning) {
-			c.addChild(new Text(truncLine(theme.fg("warning", `⚠️ ${r.skillsWarning}`), w), 0, 0));
+			c.addChild(new Text(truncLine(theme.fg("warning", `Skills warning: ${r.skillsWarning}`), w), 0, 0));
 		}
-		c.addChild(new Text(truncLine(theme.fg("dim", formatUsage(r.usage, r.model)), w), 0, 0));
+		c.addChild(new Text(truncLine(theme.fg("dim", `Usage: ${formatUsage(r.usage, r.model)}`), w), 0, 0));
 		if (r.sessionFile) {
 			c.addChild(new Text(truncLine(theme.fg("dim", `Session: ${shortenPath(r.sessionFile)}`), w), 0, 0));
 		}
@@ -285,13 +283,13 @@ export function renderSubagentResult(
 		&& r.progress?.status !== "running"
 		&& hasEmptyTextOutputWithoutOutputTarget(r.task, getFinalOutput(r.messages)),
 	);
-	const icon = hasRunning
-		? theme.fg("warning", "...")
+	const state = hasRunning
+		? renderState(theme, "running")
 		: hasEmptyWithoutTarget
-			? theme.fg("warning", "⚠")
+			? renderState(theme, "attention")
 			: ok === d.results.length
-				? theme.fg("success", "ok")
-				: theme.fg("error", "X");
+				? renderState(theme, "complete")
+				: renderState(theme, "failed");
 
 	const totalSummary =
 		d.progressSummary ||
@@ -357,14 +355,14 @@ export function renderSubagentResult(
 	const c = new Container();
 	c.addChild(
 		new Text(
-			truncLine(`${icon} ${theme.fg("toolTitle", theme.bold(modeLabel))}${contextBadge}${stepInfo}${summaryStr}`, w),
+			truncLine(`${theme.fg("toolTitle", theme.bold("Subagents"))} · ${theme.bold(modeLabel)} · ${state}${contextBadge} · ${stepInfo}${summaryStr}`, w),
 			0,
 			0,
 		),
 	);
 	// Show chain visualization
 	if (chainVis) {
-		c.addChild(new Text(truncLine(`  ${chainVis}`, w), 0, 0));
+		c.addChild(new Text(truncLine(theme.fg("dim", `Flow: ${chainVis}`), w), 0, 0));
 	}
 
 	// === STATIC STEP LAYOUT (like clarification UI) ===
@@ -384,8 +382,8 @@ export function renderSubagentResult(
 
 		if (!r) {
 			// Pending step
-			c.addChild(new Text(truncLine(theme.fg("dim", `  Step ${i + 1}: ${agentName}`), w), 0, 0));
-			c.addChild(new Text(theme.fg("dim", `    status: ○ pending`), 0, 0));
+			c.addChild(new Text(truncLine(theme.fg("dim", `Step ${i + 1} · ${agentName}`), w), 0, 0));
+			c.addChild(new Text(theme.fg("dim", "Status: pending"), 0, 0));
 			c.addChild(new Spacer(1));
 			continue;
 		}
@@ -396,18 +394,18 @@ export function renderSubagentResult(
 		const rRunning = rProg?.status === "running";
 
 		const resultOutput = getFinalOutput(r.messages);
-		const statusIcon = rRunning
-			? theme.fg("warning", "●")
+		const stepState = rRunning
+			? renderState(theme, "running")
 			: r.exitCode !== 0
-				? theme.fg("error", "✗")
+				? renderState(theme, "failed")
 				: hasEmptyTextOutputWithoutOutputTarget(r.task, resultOutput)
-					? theme.fg("warning", "⚠")
-					: theme.fg("success", "✓");
+					? renderState(theme, "attention")
+					: renderState(theme, "complete");
 		const stats = rProg ? ` | ${rProg.toolCount} tools, ${formatDuration(rProg.durationMs)}` : "";
 		const modelDisplay = r.model ? theme.fg("dim", ` (${r.model})`) : "";
 		const stepHeader = rRunning
-			? `${statusIcon} Step ${i + 1}: ${theme.bold(theme.fg("warning", r.agent))}${modelDisplay}${stats}`
-			: `${statusIcon} Step ${i + 1}: ${theme.bold(r.agent)}${modelDisplay}${stats}`;
+			? `Step ${i + 1} · ${theme.bold(theme.fg("warning", r.agent))} · ${stepState}${modelDisplay}${stats}`
+			: `Step ${i + 1} · ${theme.bold(r.agent)} · ${stepState}${modelDisplay}${stats}`;
 		c.addChild(new Text(truncLine(stepHeader, w), 0, 0));
 
 		const taskMaxLen = Math.max(20, w - 12);
@@ -425,7 +423,7 @@ export function renderSubagentResult(
 			c.addChild(new Text(truncLine(theme.fg("dim", `    skills: ${r.skills.join(", ")}`), w), 0, 0));
 		}
 		if (r.skillsWarning) {
-			c.addChild(new Text(truncLine(theme.fg("warning", `    ⚠️ ${r.skillsWarning}`), w), 0, 0));
+			c.addChild(new Text(truncLine(theme.fg("warning", `    skills warning: ${r.skillsWarning}`), w), 0, 0));
 		}
 
 		if (rRunning && rProg) {
@@ -443,7 +441,7 @@ export function renderSubagentResult(
 				const toolLine = toolArgsPreview
 					? `${rProg.currentTool}: ${toolArgsPreview}`
 					: rProg.currentTool;
-				c.addChild(new Text(truncLine(theme.fg("warning", `    > ${toolLine}`), w), 0, 0));
+				c.addChild(new Text(truncLine(theme.fg("warning", `    current tool: ${toolLine}`), w), 0, 0));
 			}
 			// Recent tools
 			if (rProg.recentTools?.length) {
@@ -452,13 +450,13 @@ export function renderSubagentResult(
 					const argsPreview = t.args.length > maxArgsLen
 						? `${t.args.slice(0, maxArgsLen)}...`
 						: t.args;
-					c.addChild(new Text(truncLine(theme.fg("dim", `      ${t.tool}: ${argsPreview}`), w), 0, 0));
+					c.addChild(new Text(truncLine(theme.fg("dim", `      recent tool: ${t.tool}: ${argsPreview}`), w), 0, 0));
 				}
 			}
 			// Recent output - let truncLine handle truncation entirely
 			const recentLines = (rProg.recentOutput ?? []).slice(-5);
 			for (const line of recentLines) {
-				c.addChild(new Text(truncLine(theme.fg("dim", `      ${line}`), w), 0, 0));
+				c.addChild(new Text(truncLine(theme.fg("dim", `      recent output: ${line}`), w), 0, 0));
 			}
 		}
 
